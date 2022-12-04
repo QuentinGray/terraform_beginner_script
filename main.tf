@@ -18,9 +18,15 @@ resource "aws_vpc" "myvpc" {
 
 resource "aws_subnet" "public_subnet" {
   vpc_id = aws_vpc.myvpc.id
-  cidr_block = "10.0.1.0/24"
+  cidr_block = "10.0.89.0/24"
   map_public_ip_on_launch = true
-  availability_zone = "us-west-2a"
+  availability_zone = "us-west-2c"
+}
+
+resource "aws_subnet" "private_subnet" {
+  vpc_id = aws_vpc.myvpc.id
+  cidr_block = "10.0.17.0/24"
+  availability_zone = "us-west-2c"
 }
 
 resource "aws_internet_gateway" "myigw" {
@@ -41,12 +47,42 @@ resource "aws_route_table_association" "proute_public_subnet" {
   route_table_id = aws_route_table.proute.id
 }
 
+resource "aws_eip" "natip" {
+  vpc = true
+}
+
+resource "aws_nat_gateway" "ngw" {
+  allocation_id = aws_eip.natip.id
+  subnet_id = aws_subnet.public_subnet.id
+}
+
+resource "aws_route_table" "privateroute" {
+  vpc_id = aws_vpc.myvpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.ngw.id
+  }
+}
+
+resource "aws_route_table_association" "route_private_subnet" {
+  subnet_id = aws_subnet.private_subnet.id
+  route_table_id = aws_route_table.privateroute.id
+}
+
 resource "aws_security_group" "MyMainSG" {
   name          = "MyServer-SG"
   description   = "cool"
   vpc_id = aws_vpc.myvpc.id
 
   ingress {
+    from_port     = 22
+    to_port       = 22
+    protocol      = "tcp"
+    cidr_blocks   = ["0.0.0.0/0"]
+  }
+
+  egress {
     from_port     = 22
     to_port       = 22
     protocol      = "tcp"
@@ -60,11 +96,11 @@ resource "aws_instance" "testingserver" {
   subnet_id = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.MyMainSG.id]
   key_name = "vockey"
+}
 
-  user_data = <<-EOF
-#!/bin/bash
-sudo yum update -y
-sudo yum install python3 -y
-pip3 install --upgrade pip && pip3 install requests uvicorn FastAPI httpie
-EOF
+resource "aws_instance" "privateserver" {
+  ami           = "ami-094125af156557ca2"
+  instance_type = "t2.nano"
+  subnet_id = aws_subnet.private_subnet.id
+  vpc_security_group_ids = [aws_security_group.MyMainSG.id]
 }
